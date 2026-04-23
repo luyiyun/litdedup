@@ -72,7 +72,11 @@ def init(
 def import_records_cmd(
     files: list[Path] = typer.Argument(..., exists=True, readable=True),
     profile: str | None = typer.Option(None, "--profile", help="Explicit parser profile."),
-    encoding: str | None = typer.Option(None, "--encoding", help="Force file decoding encoding for this import run."),
+    encoding: str | None = typer.Option(
+        None,
+        "--encoding",
+        help="Force file decoding encoding for this import run. Defaults to profile encoding or utf-8.",
+    ),
     runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Custom runtime directory."),
     force: bool = typer.Option(False, "--force", help="Re-import an already seen file path/hash."),
 ) -> None:
@@ -175,6 +179,7 @@ def dedup_fuzzy(
 def review_export(
     runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Custom runtime directory."),
     output: Path | None = typer.Option(None, "--output", help="Custom CSV output path."),
+    encoding: str = typer.Option("utf-8", "--encoding", help="CSV output encoding. Defaults to utf-8."),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing manual review CSV."),
 ) -> None:
     paths = runtime_option(runtime_dir)
@@ -184,7 +189,7 @@ def review_export(
         raise typer.BadParameter(
             f"{output_path} already exists. Pass --force to overwrite the existing manual review queue."
         )
-    metrics = export_review_queue(conn, output_path)
+    metrics = export_review_queue(conn, output_path, encoding=encoding)
     typer.echo(f"Wrote {metrics['pending_rows']} pending review rows to {output_path}")
     conn.close()
 
@@ -193,11 +198,12 @@ def review_export(
 def review_import(
     csv_path: Path = typer.Argument(..., exists=True, readable=True),
     runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Custom runtime directory."),
+    encoding: str = typer.Option("utf-8", "--encoding", help="CSV input encoding. Defaults to utf-8."),
 ) -> None:
     paths = runtime_option(runtime_dir)
     conn = connect(paths["db"])
     config = load_config(paths["config"])
-    metrics = import_review_decisions(conn, csv_path, source_priority_map(config))
+    metrics = import_review_decisions(conn, csv_path, source_priority_map(config), encoding=encoding)
     typer.echo(json.dumps(metrics, ensure_ascii=False, indent=2))
     conn.close()
 
@@ -212,6 +218,8 @@ def export(
     ),
     csv_output: Path | None = typer.Option(None, "--csv-output", help="Custom CSV output path."),
     ris_output: Path | None = typer.Option(None, "--ris-output", help="Custom RIS output path."),
+    csv_encoding: str = typer.Option("utf-8", "--csv-encoding", help="CSV output encoding. Defaults to utf-8."),
+    ris_encoding: str = typer.Option("utf-8", "--ris-encoding", help="RIS output encoding. Defaults to utf-8."),
 ) -> None:
     paths = runtime_option(runtime_dir)
     conn = connect(paths["db"])
@@ -222,8 +230,8 @@ def export(
         )
     csv_path = csv_output or paths["dedup_csv"]
     ris_path = ris_output or paths["dedup_ris"]
-    csv_count = export_deduplicated_csv(conn, csv_path)
-    ris_count = export_deduplicated_ris(conn, ris_path)
+    csv_count = export_deduplicated_csv(conn, csv_path, encoding=csv_encoding)
+    ris_count = export_deduplicated_ris(conn, ris_path, encoding=ris_encoding)
     typer.echo(f"Exported {csv_count} clusters to {csv_path}")
     typer.echo(f"Exported {ris_count} clusters to {ris_path}")
     conn.close()
@@ -234,12 +242,22 @@ def report(
     runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Custom runtime directory."),
     markdown_output: Path | None = typer.Option(None, "--markdown-output", help="Custom Markdown report path."),
     json_output: Path | None = typer.Option(None, "--json-output", help="Custom JSON report path."),
+    markdown_encoding: str = typer.Option(
+        "utf-8", "--markdown-encoding", help="Markdown output encoding. Defaults to utf-8."
+    ),
+    json_encoding: str = typer.Option("utf-8", "--json-encoding", help="JSON output encoding. Defaults to utf-8."),
 ) -> None:
     paths = runtime_option(runtime_dir)
     conn = connect(paths["db"])
     config = load_config(paths["config"])
     payload = build_report_payload(conn, config)
-    write_report(payload, markdown_output or paths["report_md"], json_output or paths["report_json"])
+    write_report(
+        payload,
+        markdown_output or paths["report_md"],
+        json_output or paths["report_json"],
+        markdown_encoding=markdown_encoding,
+        json_encoding=json_encoding,
+    )
     typer.echo(f"Wrote report to {markdown_output or paths['report_md']}")
     typer.echo(f"Wrote report JSON to {json_output or paths['report_json']}")
     conn.close()

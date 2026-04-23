@@ -71,10 +71,10 @@ def consolidate_cluster(canonical: dict, members: list[dict]) -> dict:
     return payload
 
 
-def export_deduplicated_csv(conn: sqlite3.Connection, output_path: Path) -> int:
+def export_deduplicated_csv(conn: sqlite3.Connection, output_path: Path, *, encoding: str = "utf-8") -> int:
     payloads = cluster_payloads(conn)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8-sig") as handle:
+    with output_path.open("w", newline="", encoding=encoding) as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
@@ -131,10 +131,10 @@ def export_deduplicated_csv(conn: sqlite3.Connection, output_path: Path) -> int:
     return len(payloads)
 
 
-def export_deduplicated_ris(conn: sqlite3.Connection, output_path: Path) -> int:
+def export_deduplicated_ris(conn: sqlite3.Connection, output_path: Path, *, encoding: str = "utf-8") -> int:
     payloads = cluster_payloads(conn)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
+    with output_path.open("w", encoding=encoding) as handle:
         for payload in payloads:
             handle.write(f"TY  - {ris_type(payload.get('record_type') or '')}\n")
             for author in json_list(payload.get("authors_json")):

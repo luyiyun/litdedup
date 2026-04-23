@@ -63,10 +63,10 @@ ER  -
     payload = json.loads(stats.stdout)
     assert payload["summary"]["raw_imported_records"] == 3
     assert payload["missing_key_fields"]["abstract"]["missing"] == 2
-    assert "utf-8-sig|config" in payload["encoding_summary"]
+    assert "utf-8|default" in payload["encoding_summary"]
 
 
-def test_import_normalizes_cp1252_and_mac_roman_to_unicode(tmp_path: Path) -> None:
+def test_import_requires_explicit_non_utf8_encoding_and_uses_cli_value(tmp_path: Path) -> None:
     runtime_dir = tmp_path / "runtime"
     runner.invoke(app, ["init", "--runtime-dir", str(runtime_dir)])
 
@@ -93,8 +93,12 @@ def test_import_normalizes_cp1252_and_mac_roman_to_unicode(tmp_path: Path) -> No
     cp_path = write_bytes(tmp_path / "embase" / "cp1252.ris", cp1252_ris)
     mac_path = write_bytes(tmp_path / "wos" / "mac.ris", mac_ris)
 
+    cp_default = runner.invoke(app, ["import", str(cp_path), "--profile", "embase_ris", "--runtime-dir", str(runtime_dir)])
+    assert cp_default.exit_code != 0
+    assert cp_default.exception is not None
+
     for args in (
-        ["import", str(cp_path), "--profile", "embase_ris", "--runtime-dir", str(runtime_dir)],
+        ["import", str(cp_path), "--profile", "embase_ris", "--runtime-dir", str(runtime_dir), "--encoding", "cp1252"],
         ["import", str(mac_path), "--profile", "wos_ris", "--runtime-dir", str(runtime_dir), "--encoding", "mac_roman"],
     ):
         result = runner.invoke(app, args)
@@ -112,7 +116,7 @@ def test_import_normalizes_cp1252_and_mac_roman_to_unicode(tmp_path: Path) -> No
     assert "Prognóstico de cáncer colorrectal" in titles
     assert "Résumé avec CEA élevé." in abstracts
     assert "Señales clínicas y supervivencia." in abstracts
-    assert (source_rows[0][0], source_rows[0][1], source_rows[0][2]) == ("embase_ris", "cp1252", "sample_detected")
+    assert (source_rows[0][0], source_rows[0][1], source_rows[0][2]) == ("embase_ris", "cp1252", "cli")
     assert (source_rows[1][0], source_rows[1][1], source_rows[1][2]) == ("wos_ris", "mac_roman", "cli")
 
 
@@ -185,12 +189,12 @@ ER  -
 
     queue_path = runtime_dir / "manual_review_queue.csv"
     queue_bytes = queue_path.read_bytes()
-    assert queue_bytes.startswith(b"\xef\xbb\xbf")
-    rows = list(csv.DictReader(queue_path.open("r", encoding="utf-8-sig")))
+    assert not queue_bytes.startswith(b"\xef\xbb\xbf")
+    rows = list(csv.DictReader(queue_path.open("r", encoding="utf-8")))
     assert rows, "Expected at least one pending review row"
     rows[0]["decision"] = "separate"
     rows[0]["notes"] = "Conference abstract should remain separate."
-    with queue_path.open("w", newline="", encoding="utf-8-sig") as handle:
+    with queue_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
@@ -208,8 +212,60 @@ ER  -
     assert (runtime_dir / "deduplicated_records.ris").exists()
     assert (runtime_dir / "deduplicated_records.csv").exists()
     assert (runtime_dir / "dedup_report.md").exists()
+    assert not (runtime_dir / "deduplicated_records.csv").read_bytes().startswith(b"\xef\xbb\xbf")
     report_payload = json.loads((runtime_dir / "dedup_report.json").read_text(encoding="utf-8"))
     assert report_payload["encoding_by_file"]
+
+
+def test_export_and_review_support_explicit_output_encodings(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runner.invoke(app, ["init", "--runtime-dir", str(runtime_dir)])
+
+    pubmed = write_text(
+        tmp_path / "pubmed" / "records.nbib",
+        """PMID- 12345678
+DP  - 2024
+TI  - UTF8 export sample
+AB  - Abstract one.
+AU  - Zhang S
+JT  - Test Journal
+PG  - 10-20
+PT  - Journal Article
+""",
+    )
+    result = runner.invoke(app, ["import", str(pubmed), "--profile", "pubmed_nbib", "--runtime-dir", str(runtime_dir)])
+    assert result.exit_code == 0, result.output
+    result = runner.invoke(app, ["dedup-exact", "--runtime-dir", str(runtime_dir)])
+    assert result.exit_code == 0, result.output
+
+    review_csv = runtime_dir / "manual_review_utf8sig.csv"
+    result = runner.invoke(
+        app,
+        ["review-export", "--runtime-dir", str(runtime_dir), "--output", str(review_csv), "--encoding", "utf-8-sig"],
+    )
+    assert result.exit_code == 0, result.output
+    assert review_csv.read_bytes().startswith(b"\xef\xbb\xbf")
+
+    export_csv = runtime_dir / "dedup_utf8sig.csv"
+    export_ris = runtime_dir / "dedup_utf8sig.ris"
+    result = runner.invoke(
+        app,
+        [
+            "export",
+            "--runtime-dir",
+            str(runtime_dir),
+            "--csv-output",
+            str(export_csv),
+            "--ris-output",
+            str(export_ris),
+            "--csv-encoding",
+            "utf-8-sig",
+            "--ris-encoding",
+            "utf-8",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert export_csv.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
 def test_review_import_requires_nonempty_decisions(tmp_path: Path) -> None:

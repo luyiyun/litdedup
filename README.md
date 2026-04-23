@@ -70,17 +70,17 @@ UV_CACHE_DIR=/tmp/uv-cache uv run litdedup --help
 
 ## 3. 编码策略
 
-当前版本采用“配置优先、样本探测兜底”的混合模式：
+当前版本不再做自动编码解析，规则很简单：
 
-1. 先看 `config.json` 中 profile 的 `encoding`
-2. 如果没有显式指定，再用文件前一小段样本做探测
-3. 如果命令行传了 `--encoding`，则命令行优先级最高
+1. 如果命令行传了 `--encoding`，直接使用这个编码导入文件
+2. 如果 profile 的 `encoding` 有显式值，则使用 profile 编码
+3. 如果两者都没有设置，则默认按 `utf-8` 读取
 
-默认内置策略：
+默认内置 profile：
 
-- `pubmed_nbib`: `utf-8-sig`
-- `embase_ris`: 不固定编码，允许采样探测
-- `wos_ris`: `utf-8-sig`
+- `pubmed_nbib`: `encoding = null`
+- `embase_ris`: `encoding = null`
+- `wos_ris`: `encoding = null`
 
 如果你知道某一批文件的编码，可以直接在导入时指定：
 
@@ -171,6 +171,12 @@ uv run litdedup dedup-fuzzy
 uv run litdedup review-export
 ```
 
+默认保存为 `utf-8`。如果你想显式指定导出编码：
+
+```bash
+uv run litdedup review-export --encoding utf-8-sig
+```
+
 默认输出：
 
 ```text
@@ -214,6 +220,12 @@ uv run litdedup review-export --output dedup/manual_review_queue_round2.csv
 uv run litdedup review-import dedup/manual_review_queue.csv
 ```
 
+如果人工编辑后的 CSV 使用了别的编码，也可以显式指定：
+
+```bash
+uv run litdedup review-import dedup/manual_review_queue.csv --encoding utf-8-sig
+```
+
 如果 `decision` 列全空，命令会直接报错，提示还没有真正保存人工决定。
 
 ### 4.8 导出去重后的结果
@@ -242,10 +254,24 @@ uv run litdedup export \
   --csv-output dedup/my_deduped.csv
 ```
 
+如果你想显式指定输出编码：
+
+```bash
+uv run litdedup export \
+  --csv-encoding utf-8-sig \
+  --ris-encoding utf-8
+```
+
 ### 4.9 生成报告
 
 ```bash
 uv run litdedup report
+```
+
+默认报告文件使用 `utf-8` 保存；如有需要，也可以显式指定：
+
+```bash
+uv run litdedup report --markdown-encoding utf-8 --json-encoding utf-8
 ```
 
 默认会生成：
@@ -295,11 +321,17 @@ uv run litdedup report
 
 - `--output`
 - `--runtime-dir`
+- `--encoding`
 - `--force`
 
 ### `review-import`
 
 将人工填写后的 CSV 决策回流到数据库。
+
+常用参数：
+
+- `--encoding`
+- `--runtime-dir`
 
 ### `export`
 
@@ -310,11 +342,21 @@ uv run litdedup report
 - `--allow-pending`
 - `--csv-output`
 - `--ris-output`
+- `--csv-encoding`
+- `--ris-encoding`
 - `--runtime-dir`
 
 ### `report`
 
 生成 Markdown / JSON 报告。
+
+常用参数：
+
+- `--markdown-output`
+- `--json-output`
+- `--markdown-encoding`
+- `--json-encoding`
+- `--runtime-dir`
 
 ## 6. `config.json` 说明
 
@@ -325,7 +367,6 @@ uv run litdedup report
 - `record_start_tag`
 - `record_end_tag`
 - `encoding`
-- `encoding_candidates`
 - `field_map`
 - `identifier_aliases`
 
@@ -356,15 +397,19 @@ uv run litdedup report
 uv run litdedup review-export --force
 ```
 
-### 7.3 导入前卡很久才出现进度条
+### 7.3 非 UTF-8 文件导入失败
 
-当前版本已经把整文件重型编码探测改成“配置优先 + 样本探测”，通常会比旧版快很多。
-如果知道文件编码，直接加 `--encoding` 会更快。
+这是当前的预期行为，因为工具已经不再自动猜编码。
+如果你知道源文件编码，请显式传：
+
+```bash
+uv run litdedup import your_file.ris --profile embase_ris --encoding cp1252
+```
 
 ### 7.4 CSV 在 Excel 或 WPS 中乱码
 
-当前导出的 `manual_review_queue.csv` 和 `deduplicated_records.csv` 都采用兼容表格软件的 UTF-8 输出。
-如果仍有个别字符异常，优先检查源文件本身编码，必要时在导入时显式指定 `--encoding`。
+当前导出的 `manual_review_queue.csv` 和 `deduplicated_records.csv` 默认采用 `utf-8` 输出。
+如果你希望兼容某些更偏好 BOM 的软件，可以显式使用 `utf-8-sig`。
 
 ## 8. 开发与测试
 
@@ -378,7 +423,8 @@ uv run python -m pytest -q
 
 - `Embase N2` 摘要解析
 - `WoS BOM` 处理
-- `cp1252 / mac_roman` 编码处理
+- 非 `UTF-8` 文件需显式指定导入编码
+- 导出默认使用 `utf-8`，并支持显式编码覆盖
 - 人工复核回流
 - `review-export` 的覆盖保护
 - 默认运行目录基于当前工作目录

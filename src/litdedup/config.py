@@ -13,8 +13,7 @@ class ProfileConfig(BaseModel):
     record_start_tag: str
     record_end_tag: str | None = None
     strip_bom: bool = False
-    encoding: str = ""
-    encoding_candidates: list[str] = Field(default_factory=list)
+    encoding: str | None = None
     continuation_rule: str = "space"
     field_map: dict[str, list[str]]
     multi_value_fields: list[str] = Field(default_factory=list)
@@ -39,8 +38,7 @@ def default_config() -> AppConfig:
                 format="nbib",
                 source_name="PubMed",
                 record_start_tag="PMID",
-                encoding="utf-8-sig",
-                encoding_candidates=["utf-8-sig", "utf-8", "latin-1", "cp1252", "mac_roman"],
+                encoding=None,
                 continuation_rule="nbib_indent",
                 field_map={
                     "record_type": ["PT"],
@@ -80,8 +78,7 @@ def default_config() -> AppConfig:
                 source_name="Embase",
                 record_start_tag="TY",
                 record_end_tag="ER",
-                encoding="",
-                encoding_candidates=["utf-8-sig", "utf-8", "cp1252", "mac_roman", "latin-1"],
+                encoding=None,
                 continuation_rule="space",
                 field_map={
                     "record_type": ["M3", "TY"],
@@ -121,8 +118,7 @@ def default_config() -> AppConfig:
                 record_start_tag="TY",
                 record_end_tag="ER",
                 strip_bom=True,
-                encoding="utf-8-sig",
-                encoding_candidates=["utf-8-sig", "utf-8", "cp1252", "mac_roman", "latin-1"],
+                encoding=None,
                 continuation_rule="space",
                 field_map={
                     "record_type": ["TY"],
@@ -226,7 +222,6 @@ def config_summary(config: AppConfig) -> dict[str, Any]:
                 "format": profile.format,
                 "source_name": profile.source_name,
                 "encoding": profile.encoding,
-                "encoding_candidates": profile.encoding_candidates,
                 "abstract_tags": profile.field_map.get("abstract", []),
                 "title_tags": profile.field_map.get("title", []),
                 "author_tags": profile.field_map.get("authors", []),

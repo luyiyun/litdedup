@@ -49,7 +49,8 @@
 
 - Embase 摘要优先 `N2`
 - WoS RIS 支持 BOM 去除
-- 导入编码采用“配置优先 + 样本探测兜底”
+- 不做自动编码探测；导入顺序是 `CLI --encoding -> profile encoding -> default utf-8`
+- 输出文件默认使用 `utf-8`，可由各命令显式覆盖
 - `review-export` 默认不覆盖已有人工复核 CSV，需显式 `--force`
 
 ## Common Commands

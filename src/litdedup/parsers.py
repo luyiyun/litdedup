@@ -10,8 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from charset_normalizer import from_bytes
-
 from litdedup.config import ProfileConfig
 
 
@@ -19,20 +17,6 @@ RIS_TAG_RE = re.compile(r"^([A-Z0-9]{2})  - ?(.*)$")
 NBIB_TAG_RE = re.compile(r"^([A-Z0-9]{2,4})\s*-\s?(.*)$")
 DOI_RE = re.compile(r"(10\.\d{4,9}/[-._;()/:A-Z0-9]+)", re.IGNORECASE)
 YEAR_RE = re.compile(r"(19|20)\d{2}")
-DEFAULT_ENCODING_CANDIDATES = [
-    "utf-8-sig",
-    "utf-8",
-    "cp1252",
-    "mac_roman",
-    "latin-1",
-]
-MOJIBAKE_CHAR_RE = re.compile(r"[‡†•™œŒ…‰‹›ŠŽŸ¢¤¬¨´¸ˆ˜¯ˇ]")
-IN_WORD_SYMBOL_RE = re.compile(r"(?i)[a-z\u00c0-\u024f][—–‡†•™œŒ…‰‹›ŠŽŸ¢¤¬¨´¸ˆ˜¯ˇ][a-z\u00c0-\u024f]")
-CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
-SAMPLE_BYTES = 128 * 1024
-SAMPLE_LINES = 2000
-
-
 @dataclass
 class ParsedRecord:
     source_record_id: str
@@ -61,19 +45,12 @@ def file_sha256(path: Path) -> str:
 def decode_source(path: Path, profile: ProfileConfig, *, override_encoding: str | None = None) -> DecodedSource:
     raw = path.read_bytes()
     explicit_encoding = (override_encoding or "").strip()
+    profile_encoding = (profile.encoding or "").strip()
+    chosen_encoding = explicit_encoding or profile_encoding or "utf-8"
+    detection_method = "cli" if explicit_encoding else ("config" if profile_encoding else "default")
+
     if not raw:
-        encoding_used = explicit_encoding or profile.encoding or "utf-8"
-        detection_method = "cli" if explicit_encoding else ("config" if profile.encoding else "empty")
-        return DecodedSource(text="", lines=[], encoding_used=encoding_used, detection_method=detection_method)
-
-    chosen_encoding = explicit_encoding
-    detection_method = "cli"
-    if not chosen_encoding:
-        chosen_encoding = (profile.encoding or "").strip()
-        detection_method = "config" if chosen_encoding else ""
-
-    if not chosen_encoding:
-        chosen_encoding, detection_method = detect_encoding_from_sample(raw, profile)
+        return DecodedSource(text="", lines=[], encoding_used=chosen_encoding, detection_method=detection_method)
 
     text = decode_with_encoding(raw, chosen_encoding)
     lines = text.splitlines()
@@ -83,62 +60,16 @@ def decode_source(path: Path, profile: ProfileConfig, *, override_encoding: str 
         encoding_used=chosen_encoding,
         detection_method=detection_method,
     )
-
-
-def detect_encoding_from_sample(raw: bytes, profile: ProfileConfig) -> tuple[str, str]:
-    sample = raw[:SAMPLE_BYTES]
-    detector_candidates = [match.encoding for match in from_bytes(sample) if match.encoding]
-    candidates = dedup_encodings(profile.encoding_candidates + detector_candidates + DEFAULT_ENCODING_CANDIDATES)
-
-    best_encoding = ""
-    best_score: int | None = None
-    for encoding in candidates:
-        try:
-            sample_text = decode_with_encoding(sample, encoding)
-        except UnicodeDecodeError:
-            continue
-        limited_text = "\n".join(sample_text.splitlines()[:SAMPLE_LINES])
-        score = decoded_text_score(limited_text)
-        if best_score is None or score > best_score:
-            best_score = score
-            best_encoding = encoding
-
-    if best_encoding:
-        return best_encoding, "sample_detected"
-    return DEFAULT_ENCODING_CANDIDATES[0], "fallback"
-
-
 def decode_with_encoding(raw: bytes, encoding: str) -> str:
     text = raw.decode(encoding, errors="strict")
     return normalize_decoded_text(text)
 
 
-def dedup_encodings(encodings: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for encoding in encodings:
-        if not encoding:
-            continue
-        key = encoding.lower().replace("_", "-")
-        if key in seen:
-            continue
-        seen.add(key)
-        ordered.append(encoding)
-    return ordered
-
-
 def normalize_decoded_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if text.startswith("\ufeff"):
+        text = text[1:]
     return unicodedata.normalize("NFC", text)
-
-
-def decoded_text_score(text: str) -> int:
-    score = 1000
-    score -= text.count("\ufffd") * 200
-    score -= len(MOJIBAKE_CHAR_RE.findall(text)) * 40
-    score -= len(IN_WORD_SYMBOL_RE.findall(text)) * 120
-    score -= len(CONTROL_CHAR_RE.findall(text)) * 200
-    return score
 
 
 def count_records(decoded: DecodedSource, profile: ProfileConfig) -> int:

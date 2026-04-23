@@ -389,7 +389,7 @@ def candidate_row_payload(
     }
 
 
-def export_review_queue(conn: sqlite3.Connection, output_path: Path) -> dict[str, int]:
+def export_review_queue(conn: sqlite3.Connection, output_path: Path, *, encoding: str = "utf-8") -> dict[str, int]:
     rows = conn.execute(
         """
         SELECT cp.id AS pair_id, cp.pair_key, cp.left_record_id, cp.right_record_id,
@@ -412,7 +412,7 @@ def export_review_queue(conn: sqlite3.Connection, output_path: Path) -> dict[str
         """
     ).fetchall()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8-sig") as handle:
+    with output_path.open("w", newline="", encoding=encoding) as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=[
@@ -483,9 +483,15 @@ def export_review_queue(conn: sqlite3.Connection, output_path: Path) -> dict[str
     return {"pending_rows": len(rows)}
 
 
-def import_review_decisions(conn: sqlite3.Connection, csv_path: Path, source_priority: dict[str, int]) -> dict[str, int]:
+def import_review_decisions(
+    conn: sqlite3.Connection,
+    csv_path: Path,
+    source_priority: dict[str, int],
+    *,
+    encoding: str = "utf-8",
+) -> dict[str, int]:
     decisions: list[dict] = []
-    with csv_path.open("r", newline="", encoding="utf-8-sig") as handle:
+    with csv_path.open("r", newline="", encoding=encoding) as handle:
         for row in csv.DictReader(handle):
             decision = (row.get("decision") or "").strip().lower()
             if not decision:

@@ -120,11 +120,18 @@ def build_report_payload(conn: sqlite3.Connection, config: AppConfig) -> dict[st
     return payload
 
 
-def write_report(payload: dict[str, Any], markdown_path: Path, json_path: Path) -> None:
+def write_report(
+    payload: dict[str, Any],
+    markdown_path: Path,
+    json_path: Path,
+    *,
+    markdown_encoding: str = "utf-8",
+    json_encoding: str = "utf-8",
+) -> None:
     json_path.parent.mkdir(parents=True, exist_ok=True)
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    markdown_path.write_text(markdown_report(payload), encoding="utf-8")
+    json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding=json_encoding)
+    markdown_path.write_text(markdown_report(payload), encoding=markdown_encoding)
 
 
 def markdown_report(payload: dict[str, Any]) -> str:
@@ -166,7 +173,7 @@ def markdown_report(payload: dict[str, Any]) -> str:
             "- PubMed profile: `NBIB`",
             "- Embase profile: abstract priority `N2 -> AB`",
             "- WoS profile: BOM stripping enabled before RIS parsing",
-            "- Encoding priority: `CLI --encoding -> profile encoding -> sample detection -> fallback`",
+            "- Encoding priority: `CLI --encoding -> profile encoding -> default utf-8`",
             "",
             "## Stage Metrics",
             "",
