@@ -11,6 +11,7 @@
 核心能力包括：
 
 - 渐进式导入与本地 `SQLite` 持久化
+- 从 `NBIB/RIS` 检索文件随机抽样
 - 精确去重与保守模糊去重
 - 人工复核队列导出 / 回流
 - 去重后 `RIS/CSV` 导出
@@ -79,8 +80,11 @@ UV_CACHE_DIR=/tmp/uv-cache uv run litdedup --help
 默认内置 profile：
 
 - `pubmed_nbib`: `encoding = null`
+- `standard_ris`: `encoding = null`
 - `embase_ris`: `encoding = null`
 - `wos_ris`: `encoding = null`
+
+普通 `.ris` 文件默认按 `standard_ris` 解析。路径中包含 `embase` 或 `wos` 时，会优先使用对应来源 profile。
 
 如果你知道某一批文件的编码，可以直接在导入时指定：
 
@@ -128,7 +132,33 @@ uv run litdedup import data/wos/*.ris --profile wos_ris
 uv run litdedup import data/embase/*.ris --profile embase_ris --force
 ```
 
-### 4.3 查看当前导入状态
+### 4.3 随机抽样检索结果
+
+从 `RIS` 或 `NBIB` 文件中随机抽取指定数量的记录，输出为同格式的新文件：
+
+```bash
+uv run litdedup sample data/pubmed/records.nbib samples/pubmed_sample.nbib --count 50 --seed 20260424
+```
+
+普通 `.ris` 文件默认使用 `standard_ris`，所以去重后导出的 RIS 可以直接继续抽样：
+
+```bash
+uv run litdedup sample dedup/deduplicated_records.ris samples/dedup_sample.ris --count 100 --seed 20260424
+```
+
+如果你想强制使用某个来源 profile，也可以显式指定：
+
+```bash
+uv run litdedup sample data/search/results.ris samples/results_sample.ris --count 100 --profile embase_ris
+```
+
+默认不会覆盖已有输出文件；确认要覆盖时使用：
+
+```bash
+uv run litdedup sample data/pubmed/records.nbib samples/pubmed_sample.nbib --count 50 --force
+```
+
+### 4.4 查看当前导入状态
 
 ```bash
 uv run litdedup stats
@@ -142,7 +172,7 @@ uv run litdedup stats
 - 编码使用情况
 - 去重阶段统计
 
-### 4.4 精确去重
+### 4.5 精确去重
 
 ```bash
 uv run litdedup dedup-exact
@@ -154,7 +184,7 @@ uv run litdedup dedup-exact
 - `DOI`
 - `PMCID`
 
-### 4.5 模糊去重
+### 4.6 模糊去重
 
 ```bash
 uv run litdedup dedup-fuzzy
@@ -165,7 +195,7 @@ uv run litdedup dedup-fuzzy
 - 自动合并高置信重复
 - 将边界案例留给人工复核
 
-### 4.6 导出人工复核队列
+### 4.7 导出人工复核队列
 
 ```bash
 uv run litdedup review-export
@@ -200,7 +230,7 @@ uv run litdedup review-export --force
 uv run litdedup review-export --output dedup/manual_review_queue_round2.csv
 ```
 
-### 4.7 人工复核后回流
+### 4.8 人工复核后回流
 
 在 `manual_review_queue.csv` 里主要填写这三列：
 
@@ -228,7 +258,7 @@ uv run litdedup review-import dedup/manual_review_queue.csv --encoding utf-8-sig
 
 如果 `decision` 列全空，命令会直接报错，提示还没有真正保存人工决定。
 
-### 4.8 导出去重后的结果
+### 4.9 导出去重后的结果
 
 ```bash
 uv run litdedup export
@@ -262,7 +292,7 @@ uv run litdedup export \
   --ris-encoding utf-8
 ```
 
-### 4.9 生成报告
+### 4.10 生成报告
 
 ```bash
 uv run litdedup report
@@ -300,6 +330,29 @@ uv run litdedup report --markdown-encoding utf-8 --json-encoding utf-8
 - `--encoding`
 - `--runtime-dir`
 - `--force`
+
+### `sample`
+
+从一个 `NBIB/RIS` 文件随机抽取指定数量的原始记录，写成同格式的新文件。
+
+常用参数：
+
+- `--count`
+- `--profile`
+- `--encoding`
+- `--output-encoding`
+- `--seed`
+- `--force`
+- `--runtime-dir`
+
+### `profiles`
+
+打印当前支持的 parser profile。默认输出便于阅读的文本；传 `--json` 输出 JSON。
+
+常用参数：
+
+- `--json`
+- `--runtime-dir`
 
 ### `stats`
 
@@ -372,9 +425,11 @@ uv run litdedup report --markdown-encoding utf-8 --json-encoding utf-8
 
 当前几个重要约定：
 
+- 普通 RIS 和 `litdedup export` 生成的 RIS 默认使用 `standard_ris`
 - Embase 摘要优先读取 `N2`，其次 `AB`
 - WoS 会先去除 BOM 再解析 RIS
 - PubMed 会从 `AID/LID` 中提取 DOI
+- 旧运行目录的 `config.json` 如果缺少新内置 profile，加载时会在内存中自动补齐，不会静默改写原文件
 
 ## 7. 常见问题
 
@@ -411,6 +466,18 @@ uv run litdedup import your_file.ris --profile embase_ris --encoding cp1252
 当前导出的 `manual_review_queue.csv` 和 `deduplicated_records.csv` 默认采用 `utf-8` 输出。
 如果你希望兼容某些更偏好 BOM 的软件，可以显式使用 `utf-8-sig`。
 
+### 7.5 查看支持哪些 profile
+
+```bash
+uv run litdedup profiles
+```
+
+如果想在脚本里读取：
+
+```bash
+uv run litdedup profiles --json
+```
+
 ## 8. 开发与测试
 
 运行测试：
@@ -424,6 +491,9 @@ uv run python -m pytest -q
 - `Embase N2` 摘要解析
 - `WoS BOM` 处理
 - 非 `UTF-8` 文件需显式指定导入编码
+- `NBIB/RIS` 文件随机抽样
+- 普通 `.ris` 默认使用 `standard_ris`
+- profile 列表输出
 - 导出默认使用 `utf-8`，并支持显式编码覆盖
 - 人工复核回流
 - `review-export` 的覆盖保护

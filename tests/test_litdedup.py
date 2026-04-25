@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from litdedup.cli import app
-from litdedup.config import default_runtime_dir
+from litdedup.config import default_config, default_runtime_dir
 
 
 runner = CliRunner()
@@ -207,6 +207,14 @@ ER  -
 
     export_result = runner.invoke(app, ["export", "--runtime-dir", str(runtime_dir)])
     assert export_result.exit_code == 0, export_result.output
+    sample_path = runtime_dir / "deduplicated_sample.ris"
+    sample_result = runner.invoke(
+        app,
+        ["sample", str(runtime_dir / "deduplicated_records.ris"), str(sample_path), "--count", "1", "--seed", "5"],
+    )
+    assert sample_result.exit_code == 0, sample_result.output
+    assert "profile standard_ris" in sample_result.output
+    assert sample_path.read_text(encoding="utf-8").startswith("TY  - ")
     report_result = runner.invoke(app, ["report", "--runtime-dir", str(runtime_dir)])
     assert report_result.exit_code == 0, report_result.output
     assert (runtime_dir / "deduplicated_records.ris").exists()
@@ -266,6 +274,192 @@ PT  - Journal Article
     )
     assert result.exit_code == 0, result.output
     assert export_csv.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_sample_ris_records_with_seed_is_deterministic(tmp_path: Path) -> None:
+    source = write_text(
+        tmp_path / "embase" / "records.ris",
+        """TY  - JOUR
+TI  - First RIS sample record
+AU  - Alpha, Ann
+ER  - 
+TY  - JOUR
+TI  - Second RIS sample record
+AU  - Beta, Bob
+ER  - 
+TY  - JOUR
+TI  - Third RIS sample record
+AU  - Gamma, Gia
+ER  - 
+""",
+    )
+    output = tmp_path / "sampled.ris"
+
+    result = runner.invoke(
+        app,
+        ["sample", str(source), str(output), "--count", "2", "--seed", "11"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "profile embase_ris" in result.output
+    first_output = output.read_text(encoding="utf-8")
+    assert first_output.count("TY  - JOUR") == 2
+    assert "First RIS sample record" not in first_output
+    assert first_output.index("Second RIS sample record") < first_output.index("Third RIS sample record")
+    assert first_output.endswith("\n")
+    assert "\n\nTY  - JOUR" in first_output
+
+    result = runner.invoke(
+        app,
+        ["sample", str(source), str(output), "--count", "2", "--profile", "embase_ris", "--seed", "11"],
+    )
+    assert result.exit_code != 0
+    assert "already exists" in result.output
+
+    result = runner.invoke(
+        app,
+        ["sample", str(source), str(output), "--count", "2", "--profile", "embase_ris", "--seed", "11", "--force"],
+    )
+    assert result.exit_code == 0, result.output
+    assert output.read_text(encoding="utf-8") == first_output
+
+
+def test_sample_nbib_records_with_seed_preserves_nbib_blocks(tmp_path: Path) -> None:
+    source = write_text(
+        tmp_path / "pubmed" / "records.nbib",
+        """PMID- 111
+TI  - First NBIB sample record
+AU  - Alpha A
+
+PMID- 222
+TI  - Second NBIB sample record
+AU  - Beta B
+
+PMID- 333
+TI  - Third NBIB sample record
+AU  - Gamma G
+""",
+    )
+    output = tmp_path / "sampled.nbib"
+
+    result = runner.invoke(app, ["sample", str(source), str(output), "--count", "2", "--seed", "7"])
+    assert result.exit_code == 0, result.output
+    sampled = output.read_text(encoding="utf-8")
+    assert sampled.count("PMID-") == 2
+    assert "Third NBIB sample record" not in sampled
+    assert sampled.index("Second NBIB sample record") < sampled.index("First NBIB sample record")
+    assert "\n\nPMID- " in sampled
+    assert sampled.endswith("\n")
+
+
+def test_sample_rejects_oversized_count(tmp_path: Path) -> None:
+    source = write_text(
+        tmp_path / "pubmed" / "records.nbib",
+        """PMID- 111
+TI  - Only NBIB sample record
+""",
+    )
+    output = tmp_path / "sampled.nbib"
+
+    result = runner.invoke(app, ["sample", str(source), str(output), "--count", "2"])
+    assert result.exit_code != 0
+    assert "Cannot sample 2 records from 1 available records" in result.output
+    assert not output.exists()
+
+
+def test_sample_supports_explicit_input_encoding(tmp_path: Path) -> None:
+    source = write_bytes(
+        tmp_path / "embase" / "records.ris",
+        (
+            "TY  - JOUR\n"
+            "TI  - Étude pronostique du côlon\n"
+            "AU  - Dupont, Éric\n"
+            "ER  - \n"
+        ).encode("cp1252"),
+    )
+    output = tmp_path / "sampled.ris"
+
+    result = runner.invoke(
+        app,
+        ["sample", str(source), str(output), "--count", "1", "--profile", "embase_ris", "--encoding", "cp1252"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Étude pronostique du côlon" in output.read_text(encoding="utf-8")
+
+
+def test_sample_generic_ris_defaults_to_standard_ris(tmp_path: Path) -> None:
+    source = write_text(
+        tmp_path / "records.ris",
+        """TY  - JOUR
+TI  - Generic RIS sample record
+AU  - Alpha, Ann
+AB  - Generic abstract.
+PY  - 2026
+ER  - 
+""",
+    )
+    output = tmp_path / "sampled.ris"
+
+    result = runner.invoke(app, ["sample", str(source), str(output), "--count", "1"])
+    assert result.exit_code == 0, result.output
+    assert "profile standard_ris" in result.output
+    assert "Generic RIS sample record" in output.read_text(encoding="utf-8")
+
+
+def test_sample_wos_path_still_uses_wos_profile(tmp_path: Path) -> None:
+    source = write_text(
+        tmp_path / "wos" / "records.ris",
+        "\ufeffTY  - JOUR\nTI  - WOS hinted sample record\nAU  - Alpha, Ann\nER  - \n",
+    )
+    output = tmp_path / "sampled.ris"
+
+    result = runner.invoke(app, ["sample", str(source), str(output), "--count", "1"])
+    assert result.exit_code == 0, result.output
+    assert "profile wos_ris" in result.output
+    assert "WOS hinted sample record" in output.read_text(encoding="utf-8")
+
+
+def test_sample_runtime_config_missing_standard_ris_uses_builtin_fallback(tmp_path: Path) -> None:
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    old_config = default_config().model_dump(mode="json")
+    old_config["profiles"].pop("standard_ris")
+    (runtime_dir / "config.json").write_text(json.dumps(old_config, ensure_ascii=False, indent=2), encoding="utf-8")
+    source = write_text(
+        tmp_path / "records.ris",
+        """TY  - JOUR
+TI  - Runtime fallback RIS record
+AU  - Alpha, Ann
+ER  - 
+""",
+    )
+    output = tmp_path / "sampled.ris"
+
+    result = runner.invoke(
+        app,
+        ["sample", str(source), str(output), "--count", "1", "--runtime-dir", str(runtime_dir)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "profile standard_ris" in result.output
+    assert "Runtime fallback RIS record" in output.read_text(encoding="utf-8")
+    saved_config = json.loads((runtime_dir / "config.json").read_text(encoding="utf-8"))
+    assert "standard_ris" not in saved_config["profiles"]
+
+
+def test_profiles_command_outputs_text_and_json(tmp_path: Path) -> None:
+    text_result = runner.invoke(app, ["profiles"])
+    assert text_result.exit_code == 0, text_result.output
+    assert "standard_ris" in text_result.output
+    assert "format=ris" in text_result.output
+    assert "pubmed_nbib" in text_result.output
+
+    runtime_dir = tmp_path / "runtime"
+    runner.invoke(app, ["init", "--runtime-dir", str(runtime_dir)])
+    json_result = runner.invoke(app, ["profiles", "--json", "--runtime-dir", str(runtime_dir)])
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.stdout)
+    assert payload["profiles"]["standard_ris"]["format"] == "ris"
+    assert payload["profiles"]["standard_ris"]["title_tags"] == ["TI", "T1"]
+    assert "RIS" in payload["source_priority"]
 
 
 def test_review_import_requires_nonempty_decisions(tmp_path: Path) -> None:

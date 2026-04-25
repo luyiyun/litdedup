@@ -32,7 +32,7 @@ def default_runtime_dir() -> Path:
 
 def default_config() -> AppConfig:
     return AppConfig(
-        source_priority=["PubMed", "Embase", "WoS"],
+        source_priority=["PubMed", "Embase", "WoS", "RIS"],
         profiles={
             "pubmed_nbib": ProfileConfig(
                 format="nbib",
@@ -72,6 +72,43 @@ def default_config() -> AppConfig:
                     "pmcid": ["PMC", "PMCID"],
                 },
                 source_record_id_tags=["PMID"],
+            ),
+            "standard_ris": ProfileConfig(
+                format="ris",
+                source_name="RIS",
+                record_start_tag="TY",
+                record_end_tag="ER",
+                encoding=None,
+                continuation_rule="space",
+                field_map={
+                    "record_type": ["TY"],
+                    "title": ["TI", "T1"],
+                    "abstract": ["AB", "N2"],
+                    "authors": ["AU", "A1"],
+                    "journal": ["T2", "JF", "JO"],
+                    "year": ["PY", "Y1"],
+                    "volume": ["VL"],
+                    "issue": ["IS"],
+                    "start_page": ["SP"],
+                    "end_page": ["EP"],
+                    "keywords": ["KW"],
+                    "language": ["LA"],
+                    "url": ["UR"],
+                },
+                multi_value_fields=[
+                    "AU",
+                    "A1",
+                    "KW",
+                    "AB",
+                    "N2",
+                    "N1",
+                ],
+                identifier_aliases={
+                    "doi": ["DO"],
+                    "pmid": ["PM", "PMID"],
+                    "pmcid": ["PMC", "PMCID"],
+                },
+                source_record_id_tags=["DO", "PM", "PMID", "N1"],
             ),
             "embase_ris": ProfileConfig(
                 format="ris",
@@ -164,7 +201,17 @@ def save_config(config: AppConfig, path: Path) -> Path:
 
 
 def load_config(path: Path) -> AppConfig:
-    return AppConfig.model_validate_json(path.read_text(encoding="utf-8"))
+    return merge_builtin_profiles(AppConfig.model_validate_json(path.read_text(encoding="utf-8")))
+
+
+def merge_builtin_profiles(config: AppConfig) -> AppConfig:
+    builtins = default_config()
+    profiles = {**builtins.profiles, **config.profiles}
+    source_priority = config.source_priority[:]
+    for source_name in builtins.source_priority:
+        if source_name not in source_priority:
+            source_priority.append(source_name)
+    return AppConfig(source_priority=source_priority, profiles=profiles)
 
 
 def ensure_runtime_dir(path: Path | None = None) -> Path:
@@ -204,6 +251,8 @@ def infer_profile_from_path(path: Path, config: AppConfig) -> str:
     if suffix == ".ris" and "wos" in parts:
         return "wos_ris"
     if suffix == ".ris":
+        if "standard_ris" in config.profiles:
+            return "standard_ris"
         candidates = [name for name, profile in config.profiles.items() if profile.format == "ris"]
         if len(candidates) == 1:
             return candidates[0]

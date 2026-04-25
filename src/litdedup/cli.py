@@ -7,6 +7,10 @@ import typer
 from tqdm import tqdm
 
 from litdedup.config import (
+    AppConfig,
+    ProfileConfig,
+    config_summary,
+    default_config,
     ensure_config,
     ensure_runtime_dir,
     infer_profile_from_path,
@@ -14,7 +18,6 @@ from litdedup.config import (
     runtime_paths,
     save_config,
     source_priority_map,
-    default_config,
 )
 from litdedup.db import (
     clear_dedup_state,
@@ -32,6 +35,7 @@ from litdedup.dedup import build_exact_clusters, export_review_queue, import_rev
 from litdedup.export import export_deduplicated_csv, export_deduplicated_ris
 from litdedup.parsers import count_records, decode_source, file_sha256, normalize_record, parse_file
 from litdedup.report import build_report_payload, write_report
+from litdedup.sampling import sample_records_to_file
 
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -49,6 +53,23 @@ def resolve_runtime_paths(runtime_dir: Path | None) -> dict[str, Path]:
 
 def runtime_option(path: Path | None) -> dict[str, Path]:
     return resolve_runtime_paths(path)
+
+
+def load_cli_config(runtime_dir: Path | None) -> AppConfig:
+    if runtime_dir:
+        config_path = runtime_dir / "config.json"
+        if not config_path.exists():
+            raise typer.BadParameter(f"{config_path} does not exist. Run init first or omit --runtime-dir.")
+        return load_config(config_path)
+    return default_config()
+
+
+def load_profile_config(runtime_dir: Path | None, input_path: Path, profile: str | None) -> tuple[str, ProfileConfig]:
+    config = load_cli_config(runtime_dir)
+    chosen_profile_name = profile or infer_profile_from_path(input_path, config)
+    if chosen_profile_name not in config.profiles:
+        raise typer.BadParameter(f"Unknown profile: {chosen_profile_name}")
+    return chosen_profile_name, config.profiles[chosen_profile_name]
 
 
 @app.command()
@@ -137,6 +158,71 @@ def import_records_cmd(
     typer.echo(f"Imported files: {imported_files}")
     typer.echo(f"Imported records: {imported_records}")
     conn.close()
+
+
+@app.command()
+def sample(
+    input_path: Path = typer.Argument(..., exists=True, readable=True),
+    output_path: Path = typer.Argument(...),
+    count: int = typer.Option(..., "--count", min=1, help="Number of records to sample."),
+    profile: str | None = typer.Option(None, "--profile", help="Explicit parser profile."),
+    encoding: str | None = typer.Option(
+        None,
+        "--encoding",
+        help="Force file decoding encoding. Defaults to profile encoding or utf-8.",
+    ),
+    output_encoding: str = typer.Option(
+        "utf-8",
+        "--output-encoding",
+        help="Output file encoding. Defaults to utf-8.",
+    ),
+    seed: int | None = typer.Option(None, "--seed", help="Random seed for reproducible sampling."),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing sampled output file."),
+    runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Load parser profiles from a runtime config."),
+) -> None:
+    chosen_profile_name, profile_config = load_profile_config(runtime_dir, input_path, profile)
+    if output_path.exists() and not force:
+        raise typer.BadParameter(f"{output_path} already exists. Pass --force to overwrite it.")
+    try:
+        metrics = sample_records_to_file(
+            input_path,
+            output_path,
+            profile_config,
+            count=count,
+            seed=seed,
+            encoding=encoding,
+            output_encoding=output_encoding,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        f"Sampled {metrics.sampled_records} of {metrics.total_records} records from {input_path} "
+        f"to {output_path} using profile {chosen_profile_name} "
+        f"(encoding={metrics.encoding_used}, source={metrics.encoding_source})"
+    )
+
+
+@app.command()
+def profiles(
+    runtime_dir: Path | None = typer.Option(None, "--runtime-dir", help="Load parser profiles from a runtime config."),
+    as_json: bool = typer.Option(False, "--json", help="Print profile metadata as JSON."),
+) -> None:
+    config = load_cli_config(runtime_dir)
+    summary = config_summary(config)
+    if as_json:
+        typer.echo(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+
+    typer.echo("Supported profiles:")
+    for name, payload in summary["profiles"].items():
+        typer.echo(
+            f"- {name}: format={payload['format']}, source={payload['source_name']}, "
+            f"title={','.join(payload['title_tags']) or '-'}, "
+            f"abstract={','.join(payload['abstract_tags']) or '-'}, "
+            f"authors={','.join(payload['author_tags']) or '-'}, "
+            f"year={','.join(payload['year_tags']) or '-'}, "
+            f"strip_bom={payload['strip_bom']}"
+        )
 
 
 @app.command()
